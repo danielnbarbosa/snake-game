@@ -1,5 +1,4 @@
-// Simple cache-first service worker for offline play
-const CACHE = 'snake-pwa-v1';
+const CACHE = 'snakes-pwa-v1';
 const ASSETS = [
   './',
   './index.html',
