@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Snake</title>
+  <!-- iOS standalone app look -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <style>
+    html, body { margin:0; height:100%; background:#111; color:#fff; font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+    #wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:10px; }
+    canvas { background:#000; touch-action:none; border-radius:12px; box-shadow: 0 6px 20px rgba(0,0,0,.45); }
+    #hud { display:flex; gap:12px; align-items:center; font-weight:600; }
+    #buttons { display:grid; grid-template-columns: 64px 64px 64px; grid-template-rows: 64px 64px 64px; gap:8px; user-select:none; -webkit-user-select:none; }
+    .btn { background:#1f1f1f; border:1px solid #333; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; }
+    .btn:active { transform:scale(0.98); }
+    .ghost { visibility:hidden; }
+    #tip { opacity:.7; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="game" width="360" height="360" aria-label="Snake game area"></canvas>
+    <div id="hud">
+      <div>Score: <span id="score">0</span></div>
+      <div>Best: <span id="best">0</span></div>
+      <button id="pause" class="btn" style="padding:10px 14px;">⏸︎</button>
+      <button id="restart" class="btn" style="padding:10px 14px;">↻</button>
+    </div>
+    <!-- On-screen controls for touch (works offline & in standalone) -->
+    <div id="buttons" aria-label="Directional controls" role="group">
+      <div class="ghost"></div>
+      <div class="btn" data-dir="up">▲</div>
+      <div class="ghost"></div>
+      <div class="btn" data-dir="left">◀</div>
+      <div class="btn" data-dir="down">▼</div>
+      <div class="btn" data-dir="right">▶</div>
+      <div class="ghost"></div><div class="ghost"></div><div class="ghost"></div>
+    </div>
+    <div id="tip">Tip: swipe on the board or use the arrow buttons. Add to Home Screen for full-screen.</div>
+  </div>
+
+  <script>
+  // Minimal offline support
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    });
+  }
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const pauseBtn = document.getElementById('pause');
+  const restartBtn = document.getElementById('restart');
+
+  // Scale canvas to fit (maintain square)
+  function fit() {
+    const pad = 20;
+    const size = Math.min(window.innerWidth, window.innerHeight) - pad*2;
+    const s = Math.max(240, Math.min(560, size));
+    canvas.style.width = s + 'px';
+    canvas.style.height = s + 'px';
+  }
+  fit();
+  window.addEventListener('resize', fit);
+
+  // Game constants
+  const COLS = 18, ROWS = 18;
+  const CELL = canvas.width / COLS;
+  const START_LEN = 4;
+  const TICK_MS_START = 120;
+  const SPEEDUP_EVERY = 5; // apples
+  const SPEED_DELTA = 6;
+
+  // State
+  let snake, dir, nextDir, apple, tickMs, score, best, paused, dead, ticksSinceMove;
+  best = parseInt(localStorage.getItem('best-score') || '0', 10);
+  bestEl.textContent = best;
+
+  function reset() {
+    snake = [];
+    for (let i=START_LEN-1;i>=0;i--) snake.push({x: 3+i, y: 8});
+    dir = 'right';
+    nextDir = 'right';
+    apple = dropApple();
+    tickMs = TICK_MS_START;
+    score = 0;
+    scoreEl.textContent = score;
+    paused = false;
+    dead = false;
+    ticksSinceMove = 0;
+  }
+
+  function dropApple() {
+    while (true) {
+      const a = { x: Math.floor(Math.random()*COLS), y: Math.floor(Math.random()*ROWS) };
+      if (!snake || !snake.some(s => s.x===a.x && s.y===a.y)) return a;
+    }
+  }
+
+  // Input
+  function setDir(d) {
+    const opposite = { up:'down', down:'up', left:'right', right:'left' };
+    if (d !== opposite[dir]) nextDir = d;
+  }
+  document.getElementById('buttons').addEventListener('touchstart', e => {
+    const t = e.target.closest('.btn');
+    if (t && t.dataset.dir) { setDir(t.dataset.dir); e.preventDefault(); }
+  }, {passive:false});
+  document.getElementById('buttons').addEventListener('click', e => {
+    const t = e.target.closest('.btn'); if (t && t.dataset.dir) setDir(t.dataset.dir);
+  });
+
+  // Swipe on canvas
+  let touchStart = null;
+  canvas.addEventListener('touchstart', e => {
+    const t = e.changedTouches[0]; touchStart = {x:t.clientX, y:t.clientY}; e.preventDefault();
+  }, {passive:false});
+  canvas.addEventListener('touchmove', e => { e.preventDefault(); }, {passive:false});
+  canvas.addEventListener('touchend', e => {
+    if (!touchStart) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStart.x;
+    const dy = t.clientY - touchStart.y;
+    if (Math.abs(dx) > Math.abs(dy)) setDir(dx>0?'right':'left');
+    else if (Math.abs(dy) > 8) setDir(dy>0?'down':'up');
+    touchStart = null;
+    e.preventDefault();
+  }, {passive:false});
+
+  // Keyboard for desktop testing
+  window.addEventListener('keydown', e => {
+    const k = e.key;
+    if (k==='ArrowUp') setDir('up');
+    else if (k==='ArrowDown') setDir('down');
+    else if (k==='ArrowLeft') setDir('left');
+    else if (k==='ArrowRight') setDir('right');
+    else if (k===' ' || k==='Enter') togglePause();
+  });
+
+  pauseBtn.addEventListener('click', togglePause);
+  function togglePause() {
+    if (dead) reset();
+    else paused = !paused;
+    pauseBtn.textContent = paused ? '▶︎' : '⏸︎';
+  }
+  restartBtn.addEventListener('click', () => { reset(); });
+
+  // Game loop
+  let last = performance.now();
+  let acc = 0;
+  reset();
+  requestAnimationFrame(loop);
+
+  function loop(ts) {
+    const dt = ts - last;
+    last = ts;
+    acc += dt;
+
+    while (acc >= tickMs) {
+      if (!paused && !dead) step();
+      acc -= tickMs;
+    }
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  function step() {
+    dir = nextDir;
+    const head = { ...snake[0] };
+    if (dir==='left') head.x--;
+    else if (dir==='right') head.x++;
+    else if (dir==='up') head.y--;
+    else if (dir==='down') head.y++;
+
+    // wrap or die at wall: choose die, classic
+    if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) {
+      return gameOver();
+    }
+    // self-collision
+    if (snake.some(s => s.x===head.x && s.y===head.y)) {
+      return gameOver();
+    }
+    snake.unshift(head);
+
+    if (head.x===apple.x && head.y===apple.y) {
+      score++; scoreEl.textContent = score;
+      if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem('best-score', best); }
+      apple = dropApple();
+      if (score % SPEEDUP_EVERY === 0 && tickMs > 60) tickMs = Math.max(60, tickMs - SPEED_DELTA);
+      // keep tail (grow)
+    } else {
+      snake.pop();
+    }
+  }
+
+  function gameOver() {
+    dead = true;
+  }
+
+  function render() {
+    // Clear
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,canvas.width, canvas.height);
+
+    // Grid (subtle)
+    ctx.globalAlpha = 0.15;
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 1;
+    for (let x=1;x<COLS;x++) {
+      ctx.beginPath(); ctx.moveTo(x*CELL, 0); ctx.lineTo(x*CELL, canvas.height); ctx.stroke();
+    }
+    for (let y=1;y<ROWS;y++) {
+      ctx.beginPath(); ctx.moveTo(0, y*CELL); ctx.lineTo(canvas.width, y*CELL); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Apple
+    drawCell(apple.x, apple.y, '#e74c3c');
+
+    // Snake
+    snake.forEach((s, i) => drawCell(s.x, s.y, i===0 ? '#2ecc71' : '#27ae60'));
+
+    if (paused) overlay('Paused');
+    if (dead) overlay('Game Over');
+  }
+
+  function drawCell(cx, cy, color) {
+    const pad = 2;
+    const x = cx*CELL+pad, y = cy*CELL+pad, w = CELL-2*pad, h = CELL-2*pad;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    const r = 6;
+    roundRect(ctx, x, y, w, h, r);
+    ctx.fill();
+  }
+
+  function overlay(text) {
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.fillRect(0,0,canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 28px system-ui, -apple-system, Segoe UI, Roboto';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, canvas.width/2, canvas.height/2);
+    ctx.font = '14px system-ui, -apple-system, Segoe UI, Roboto';
+    ctx.fillText('Tap ▶︎ to resume or ↻ to restart', canvas.width/2, canvas.height/2 + 28);
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.moveTo(x+r, y);
+    ctx.arcTo(x+w, y, x+w, y+h, r);
+    ctx.arcTo(x+w, y+h, x, y+h, r);
+    ctx.arcTo(x, y+h, x, y, r);
+    ctx.arcTo(x, y, x+w, y, r);
+  }
+  </script>
+</body>
+</html>
