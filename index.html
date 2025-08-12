@@ -3,22 +3,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <title>Snakes v7</title>
+  <title>Snakes v8</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <link rel="manifest" href="manifest.webmanifest">
   <style>
+    :root { 
+      --inset-top: env(safe-area-inset-top, 0px);
+      --inset-right: env(safe-area-inset-right, 0px);
+      --inset-bottom: env(safe-area-inset-bottom, 0px);
+      --inset-left: env(safe-area-inset-left, 0px);
+    }
     html, body { margin:0; padding:0; width:100%; height:100%; background:#000; }
-    body { overscroll-behavior:none; }
-    #game { display:block; width:100vw; height:100vh; background:#050607; touch-action:none; }
+    body { overscroll-behavior:none; display:flex; align-items:center; justify-content:center;
+           padding: var(--inset-top) var(--inset-right) var(--inset-bottom) var(--inset-left); }
+    #game { display:block; width:100vmin; height:100vmin; max-width:100%; max-height:100%; background:#050607; touch-action:none; border-radius:12px; }
   </style>
 </head>
 <body>
   <canvas id="game" width="480" height="480" aria-label="Snakes game area"></canvas>
 
 <script>
-// PWA
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(()=>{});
@@ -43,28 +49,47 @@ function sfxBounce(){ beep(180, .05, 'square', .04); }
 window.addEventListener('touchstart', () => { if (!audio.ctx && audio.enabled) initAudio(); }, {passive:true});
 window.addEventListener('mousedown', () => { if (!audio.ctx && audio.enabled) initAudio(); });
 
-// ---- Game constants ----
+// ---- Logical board (square, non-stretched) ----
 const COLS = 24, ROWS = 24;
-const CELL = 20;                       // logic unit; rendering scales via CSS (canvas draws at 480px)
-const CANVAS_SIZE = 480;
+const LOGICAL_SIZE = 480;     // draw space; we scale to device DPR & CSS 100vmin
+const CELL = LOGICAL_SIZE / COLS;
+
 const TICK_MS_PLAYER = 190;
-const AI_STEP_INTERVAL = 2;            // AI are slower
+const AI_STEP_INTERVAL = 2;
 const NPC_MAX = 2;
 const PLAYER_START_LEN = 3;
 const APPLE_COUNT = 5;
+
 const PLAYER_STYLE = { base:'#41d281', edge:'#072416', highlight:'rgba(255,255,255,0.25)', neon:'#4dff9a', stripe:'#1a834f' };
 const AI_STYLE      = { base:'#e8a45a', edge:'#3a1f0f', highlight:'rgba(255,255,255,0.20)', neon:'#ffc26b', stripe:'#8a4a16' };
 
 // ---- State ----
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-let score=0, best=parseInt(localStorage.getItem('best-score-v7')||'0',10), paused=false, dead=false;
+let score=0, best=parseInt(localStorage.getItem('best-score-v8')||'0',10), paused=false, dead=false;
 let player, npcs, apples, dir, nextDir;
 let tickAccum = 0, lastTs = performance.now(), tickCount = 0;
 
 // Finger steering
 let steerPoint=null;
 
+// Fit to iPhone viewport: square board as large as possible with DPR
+function fitCanvas() {
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const rectW = window.innerWidth;
+  const rectH = window.innerHeight;
+  const sizeCss = Math.min(rectW, rectH); // vmin in px
+  canvas.style.width = sizeCss + 'px';
+  canvas.style.height = sizeCss + 'px';
+  canvas.width = Math.floor(sizeCss * dpr);
+  canvas.height = Math.floor(sizeCss * dpr);
+  const scale = (canvas.width / LOGICAL_SIZE);
+  ctx.setTransform(scale, 0, 0, scale, 0, 0); // draw in 480x480 space
+}
+fitCanvas();
+window.addEventListener('resize', fitCanvas);
+
+// Helpers
 function rnd(n){ return Math.floor(Math.random()*n); }
 function wrap(v, max){ return (v + max) % max; }
 function cellEq(a,b){ return a.x===b.x && a.y===b.y; }
@@ -101,25 +126,37 @@ function reset() {
 }
 reset();
 
-// Steering (drag anywhere on canvas)
+// Steering (drag anywhere)
 canvas.addEventListener('touchstart', e=>{
-  const t=e.changedTouches[0]; steerPoint={x:t.clientX,y:t.clientY}; e.preventDefault();
+  const t=e.changedTouches[0];
+  if (dead) { reset(); return; }
+  if (paused) { paused=false; }
+  steerPoint={x:t.clientX,y:t.clientY}; e.preventDefault();
 },{passive:false});
 canvas.addEventListener('touchmove', e=>{
-  const t=e.changedTouches[0]; steerPoint={x:t.clientX,y:t.clientY}; steerToward(steerPoint); e.preventDefault();
+  const t=e.changedTouches[0];
+  steerPoint={x:t.clientX,y:t.clientY};
+  steerToward(steerPoint);
+  e.preventDefault();
 },{passive:false});
 canvas.addEventListener('touchend', e=>{ steerPoint=null; e.preventDefault(); }, {passive:false});
+canvas.addEventListener('mousedown', e=>{
+  if (dead) { reset(); return; }
+  if (paused) { paused=false; return; }
+  // click to toggle pause
+  paused = !paused;
+});
 
 function steerToward(pt){
   const rect = canvas.getBoundingClientRect();
-  const fx = (pt.x - rect.left) / rect.width * CANVAS_SIZE;
-  const fy = (pt.y - rect.top) / rect.height * CANVAS_SIZE;
+  const fx = (pt.x - rect.left) / rect.width * LOGICAL_SIZE;
+  const fy = (pt.y - rect.top) / rect.height * LOGICAL_SIZE;
   const head = { x: player.body[0].x*CELL + CELL/2, y: player.body[0].y*CELL + CELL/2 };
   let dx = fx - head.x, dy = fy - head.y;
-  if (dx > CANVAS_SIZE/2) dx -= CANVAS_SIZE;
-  if (dx < -CANVAS_SIZE/2) dx += CANVAS_SIZE;
-  if (dy > CANVAS_SIZE/2) dy -= CANVAS_SIZE;
-  if (dy < -CANVAS_SIZE/2) dy += CANVAS_SIZE;
+  if (dx > LOGICAL_SIZE/2) dx -= LOGICAL_SIZE;
+  if (dx < -LOGICAL_SIZE/2) dx += LOGICAL_SIZE;
+  if (dy > LOGICAL_SIZE/2) dy -= LOGICAL_SIZE;
+  if (dy < -LOGICAL_SIZE/2) dy += LOGICAL_SIZE;
   const adx = Math.abs(dx), ady = Math.abs(dy);
   const desired = adx > ady ? (dx>0?'right':'left') : (dy>0?'down':'up');
   setDir(desired);
@@ -137,11 +174,10 @@ window.addEventListener('keydown', e => {
   else if (k==='ArrowDown') setDir('down');
   else if (k==='ArrowLeft') setDir('left');
   else if (k==='ArrowRight') setDir('right');
-  else if (k===' ' || k==='Enter') togglePause();
+  else if (k===' ' || k==='Enter') { if (dead) reset(); else paused = !paused; }
   else if (k.toLowerCase()==='m') toggleMute();
 });
 
-function togglePause(){ if (dead) reset(); else paused=!paused; }
 function toggleMute(){ audio.enabled=!audio.enabled; if (audio.enabled && !audio.ctx) initAudio(); }
 
 // ---- Game loop ----
@@ -187,7 +223,7 @@ function step() {
   const aIndex = apples.findIndex(p => cellEq(p, player.body[0]));
   if (aIndex !== -1) {
     apples.splice(aIndex,1); sfxApple();
-    score += 1; if (score>best){ best=score; localStorage.setItem('best-score-v7', best); }
+    score += 1; if (score>best){ best=score; localStorage.setItem('best-score-v8', best); }
     growSnake(player, 1); spawnApple();
   }
 
@@ -217,7 +253,7 @@ function step() {
       const playerLen = player.body.length, targetLen = npc.body.length;
       if (playerLen >= targetLen) {
         sfxEatSnake();
-        score += targetLen; if (score>best){ best=score; localStorage.setItem('best-score-v7', best); }
+        score += targetLen; if (score>best){ best=score; localStorage.setItem('best-score-v8', best); }
         growSnake(player, Math.min(targetLen, 40));
         replaceNPC(npc);
         return;
@@ -237,13 +273,13 @@ function spawnApple(){ for(let i=0;i<500;i++){ const pos={x:rnd(COLS), y:rnd(ROW
 
 // ---- Rendering ----
 function render() {
-  // clear
-  ctx.fillStyle = '#061013'; ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+  // clear to logical square
+  ctx.fillStyle = '#061013'; ctx.fillRect(0,0,LOGICAL_SIZE,LOGICAL_SIZE);
 
   // subtle grid
   ctx.save(); ctx.globalAlpha = 0.10; ctx.strokeStyle = '#0f1b1f'; ctx.lineWidth = 1;
-  for (let x=1;x<COLS;x++) { ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,CANVAS_SIZE); ctx.stroke(); }
-  for (let y=1;y<ROWS;y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(CANVAS_SIZE,y*CELL); ctx.stroke(); }
+  for (let x=1;x<COLS;x++) { ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,LOGICAL_SIZE); ctx.stroke(); }
+  for (let y=1;y<ROWS;y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(LOGICAL_SIZE,y*CELL); ctx.stroke(); }
   ctx.restore();
 
   // apples
@@ -253,14 +289,14 @@ function render() {
   for (const s of npcs) drawSnakeNeon(s);
   drawSnakeNeon(player, true);
 
-  // on-canvas HUD
+  // HUD
   drawHUD();
 
   if (paused) overlay('Paused');
   if (dead) overlay('Game Over');
 }
 
-// Continuous neon striped snakes
+// Continuous neon striped snakes (same as v7, with unwrap)
 function drawSnakeNeon(s, isPlayer=false) {
   if (s.body.length < 2) return;
   let pts = s.body.map(seg => ({ x: seg.x*CELL + CELL/2, y: seg.y*CELL + CELL/2 }));
@@ -286,8 +322,8 @@ function drawSnakeNeon(s, isPlayer=false) {
 function unwrapPath(pts){
   const res=[{x:pts[0].x,y:pts[0].y}];
   for(let i=1;i<pts.length;i++){ let {x,y}=pts[i]; const px=res[i-1].x, py=res[i-1].y; let dx=x-px, dy=y-py;
-    if (dx > CANVAS_SIZE/2) x -= CANVAS_SIZE; if (dx < -CANVAS_SIZE/2) x += CANVAS_SIZE;
-    if (dy > CANVAS_SIZE/2) y -= CANVAS_SIZE; if (dy < -CANVAS_SIZE/2) y += CANVAS_SIZE;
+    if (dx > LOGICAL_SIZE/2) x -= LOGICAL_SIZE; if (dx < -LOGICAL_SIZE/2) x += LOGICAL_SIZE;
+    if (dy > LOGICAL_SIZE/2) y -= LOGICAL_SIZE; if (dy < -LOGICAL_SIZE/2) y += LOGICAL_SIZE;
     res.push({x,y});
   } return res;
 }
@@ -320,11 +356,11 @@ function drawHUD(){
 }
 
 function overlay(text) {
-  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0,0,canvas.width, canvas.height);
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0,0,LOGICAL_SIZE, LOGICAL_SIZE);
   ctx.fillStyle = '#fff'; ctx.font = 'bold 28px -apple-system, system-ui, Segoe UI, Roboto'; ctx.textAlign = 'center';
-  ctx.fillText(text, canvas.width/2, canvas.height/2);
+  ctx.fillText(text, LOGICAL_SIZE/2, LOGICAL_SIZE/2);
   ctx.font = '14px -apple-system, system-ui, Segoe UI, Roboto';
-  ctx.fillText('Tap to resume / restart', canvas.width/2, canvas.height/2 + 28);
+  ctx.fillText('Tap to resume / restart', LOGICAL_SIZE/2, LOGICAL_SIZE/2 + 28);
 }
 
 function gameOver(){ dead=true; sfxDead(); }
