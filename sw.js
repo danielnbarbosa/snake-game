@@ -1,4 +1,4 @@
-const CACHE = 'snakes-v8-pwa-v1';
+const CACHE = 'snakes-v9-pwa-v1';
 const ASSETS = [
   './',
   './index.html',
