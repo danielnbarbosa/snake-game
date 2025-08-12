@@ -3,55 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <title>Snakes v6</title>
+  <title>Snakes v7</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
   <link rel="manifest" href="manifest.webmanifest">
   <style>
-    html, body { margin:0; height:100%; background:#0b0e0f; color:#fff; font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
-    #wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:10px; }
-    canvas { background:#050607; touch-action:none; border-radius:12px; box-shadow: 0 6px 22px rgba(0,0,0,.55); }
-    #hud { display:flex; gap:12px; align-items:center; font-weight:600; flex-wrap:wrap; justify-content:center; }
-    #buttons { display:grid; grid-template-columns: 64px 64px 64px; grid-template-rows: 64px 64px 64px; gap:8px; user-select:none; -webkit-user-select:none; }
-    .btn { background:#161a1d; border:1px solid #2a2f33; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; }
-    .btn:active { transform:scale(0.98); }
-    .ghost { visibility:hidden; }
-    #tip { opacity:.75; font-size: 13px; text-align:center; max-width: 720px;}
-    a { color:#9fe870; text-decoration: none; }
-    #pause, #restart, #mute { padding:10px 14px; }
-    .chip { padding:.25rem .5rem; border:1px solid #2a2f33; border-radius:999px; font-size:12px; opacity:.9 }
+    html, body { margin:0; padding:0; width:100%; height:100%; background:#000; }
+    body { overscroll-behavior:none; }
+    #game { display:block; width:100vw; height:100vh; background:#050607; touch-action:none; }
   </style>
 </head>
 <body>
-  <div id="wrap">
-    <canvas id="game" width="480" height="480" aria-label="Snakes game area"></canvas>
-    <div id="hud">
-      <div class="chip">Score: <span id="score">0</span></div>
-      <div class="chip">Best: <span id="best">0</span></div>
-      <div class="chip">Snakes: <span id="nsnakes">0</span></div>
-      <div class="chip">Apples: <span id="napples">0</span></div>
-      <button id="pause" class="btn">⏸︎</button>
-      <button id="restart" class="btn">↻</button>
-      <button id="mute" class="btn" aria-pressed="false">🔊</button>
-    </div>
-    <div id="buttons" aria-label="Directional controls" role="group">
-      <div class="ghost"></div>
-      <div class="btn" data-dir="up">▲</div>
-      <div class="ghost"></div>
-      <div class="btn" data-dir="left">◀</div>
-      <div class="btn" data-dir="down">▼</div>
-      <div class="btn" data-dir="right">▶</div>
-      <div class="ghost"></div><div class="ghost"></div><div class="ghost"></div>
-    </div>
-    <div id="tip">
-      Wrap-around walls. Apples grow you. AI snakes bounce off you (no clipping). Continuous neon snakes with stripes.
-      Combat: if you're <b>larger or equal</b> you can eat other snakes from anywhere; if <b>smaller</b> you bounce off them.
-      Pro tip: on touch screens, <b>drag your finger</b> on the board to steer toward it.
-    </div>
-  </div>
+  <canvas id="game" width="480" height="480" aria-label="Snakes game area"></canvas>
 
 <script>
+// PWA
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(()=>{});
@@ -60,75 +27,44 @@ if ('serviceWorker' in navigator) {
 
 // ---- Audio ----
 let audio = { ctx: null, enabled: true };
-function initAudio() {
-  if (audio.ctx) return;
-  try { audio.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { audio.enabled = false; }
-}
+function initAudio() { if (audio.ctx) return; try { audio.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { audio.enabled = false; } }
 function beep(freq=440, dur=0.08, type='sine', gain=0.03) {
   if (!audio.enabled || !audio.ctx) return;
-  const ctx = audio.ctx;
-  const t0 = ctx.currentTime;
-  const o = ctx.createOscillator();
-  const g = ctx.createGain();
-  o.type = type;
-  o.frequency.setValueAtTime(freq, t0);
-  g.gain.setValueAtTime(gain, t0);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  o.connect(g).connect(ctx.destination);
-  o.start(t0);
-  o.stop(t0 + dur);
+  const ctx = audio.ctx, t0 = ctx.currentTime;
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t0);
+  g.gain.setValueAtTime(gain, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  o.connect(g).connect(ctx.destination); o.start(t0); o.stop(t0+dur);
 }
 function sfxApple(){ beep(320, .06, 'triangle', .05); }
 function sfxEatSnake(){ beep(220, .07, 'triangle', .05); setTimeout(()=>beep(370, .07, 'triangle', .05), 60); }
 function sfxDead(){ beep(120, .18, 'sawtooth', .04); setTimeout(()=>beep(90, .22, 'sawtooth', .035), 120); }
 function sfxBounce(){ beep(180, .05, 'square', .04); }
-window.addEventListener('touchstart', () => { if (!audio.ctx && audio.enabled) { initAudio(); } }, {passive:true});
-window.addEventListener('mousedown', () => { if (!audio.ctx && audio.enabled) { initAudio(); } });
+window.addEventListener('touchstart', () => { if (!audio.ctx && audio.enabled) initAudio(); }, {passive:true});
+window.addEventListener('mousedown', () => { if (!audio.ctx && audio.enabled) initAudio(); });
 
 // ---- Game constants ----
 const COLS = 24, ROWS = 24;
-const CELL = 20;
+const CELL = 20;                       // logic unit; rendering scales via CSS (canvas draws at 480px)
 const CANVAS_SIZE = 480;
 const TICK_MS_PLAYER = 190;
-const AI_STEP_INTERVAL = 2;   // AI are slower
+const AI_STEP_INTERVAL = 2;            // AI are slower
 const NPC_MAX = 2;
 const PLAYER_START_LEN = 3;
 const APPLE_COUNT = 5;
-const MAX_LEN = COLS*ROWS - 1;
-
-// Colors & neon
 const PLAYER_STYLE = { base:'#41d281', edge:'#072416', highlight:'rgba(255,255,255,0.25)', neon:'#4dff9a', stripe:'#1a834f' };
 const AI_STYLE      = { base:'#e8a45a', edge:'#3a1f0f', highlight:'rgba(255,255,255,0.20)', neon:'#ffc26b', stripe:'#8a4a16' };
 
 // ---- State ----
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-const scoreEl = document.getElementById('score');
-const bestEl = document.getElementById('best');
-const nsnakesEl = document.getElementById('nsnakes');
-const napplesEl = document.getElementById('napples');
-const pauseBtn = document.getElementById('pause');
-const restartBtn = document.getElementById('restart');
-const muteBtn = document.getElementById('mute');
-
-let player, npcs, apples, dir, nextDir, score, best, paused, dead;
+let score=0, best=parseInt(localStorage.getItem('best-score-v7')||'0',10), paused=false, dead=false;
+let player, npcs, apples, dir, nextDir;
 let tickAccum = 0, lastTs = performance.now(), tickCount = 0;
 
-best = parseInt(localStorage.getItem('best-score-v6') || '0', 10);
-bestEl.textContent = best;
+// Finger steering
+let steerPoint=null;
 
-// Fit canvas CSS size
-function fit() {
-  const pad = 16;
-  const size = Math.min(window.innerWidth, window.innerHeight) - pad*2;
-  const s = Math.max(300, Math.min(700, size));
-  canvas.style.width = s + 'px';
-  canvas.style.height = s + 'px';
-}
-fit();
-window.addEventListener('resize', fit);
-
-// Helpers
 function rnd(n){ return Math.floor(Math.random()*n); }
 function wrap(v, max){ return (v + max) % max; }
 function cellEq(a,b){ return a.x===b.x && a.y===b.y; }
@@ -150,40 +86,51 @@ function newSnake(len, style, avoid=[]) {
       if (avoid.some(s=>s.body.some(p=>cellEq(p,pos)))) { body.length=0; break; }
       body.push(pos);
     }
-    if (body.length===len) {
-      return { body, dir, nextDir: dir, style, ai: false, lastTail: null };
-    }
+    if (body.length===len) return { body, dir, nextDir: dir, style, ai: false, lastTail: null };
   }
   return { body:[{x:Math.floor(COLS/2), y:Math.floor(ROWS/2)}], dir:'right', nextDir:'right', style, ai:false, lastTail:null };
 }
 
 function reset() {
-  score = 0; scoreEl.textContent = score;
-  paused = false; dead = false;
+  score = 0; paused=false; dead=false;
   player = newSnake(PLAYER_START_LEN, PLAYER_STYLE);
-  npcs = [];
-  for (let i=0;i<NPC_MAX;i++) spawnNPC();
-  nsnakesEl.textContent = npcs.length;
+  npcs = []; for (let i=0;i<NPC_MAX;i++) spawnNPC();
+  apples = []; for (let i=0;i<APPLE_COUNT;i++) spawnApple();
   dir='right'; nextDir='right';
-  apples = [];
-  for (let i=0;i<APPLE_COUNT;i++) spawnApple();
-  napplesEl.textContent = apples.length;
   tickAccum = 0; lastTs = performance.now(); tickCount = 0;
 }
 reset();
 
-// ---- Controls ----
-// Keyboard + buttons same as before
+// Steering (drag anywhere on canvas)
+canvas.addEventListener('touchstart', e=>{
+  const t=e.changedTouches[0]; steerPoint={x:t.clientX,y:t.clientY}; e.preventDefault();
+},{passive:false});
+canvas.addEventListener('touchmove', e=>{
+  const t=e.changedTouches[0]; steerPoint={x:t.clientX,y:t.clientY}; steerToward(steerPoint); e.preventDefault();
+},{passive:false});
+canvas.addEventListener('touchend', e=>{ steerPoint=null; e.preventDefault(); }, {passive:false});
+
+function steerToward(pt){
+  const rect = canvas.getBoundingClientRect();
+  const fx = (pt.x - rect.left) / rect.width * CANVAS_SIZE;
+  const fy = (pt.y - rect.top) / rect.height * CANVAS_SIZE;
+  const head = { x: player.body[0].x*CELL + CELL/2, y: player.body[0].y*CELL + CELL/2 };
+  let dx = fx - head.x, dy = fy - head.y;
+  if (dx > CANVAS_SIZE/2) dx -= CANVAS_SIZE;
+  if (dx < -CANVAS_SIZE/2) dx += CANVAS_SIZE;
+  if (dy > CANVAS_SIZE/2) dy -= CANVAS_SIZE;
+  if (dy < -CANVAS_SIZE/2) dy += CANVAS_SIZE;
+  const adx = Math.abs(dx), ady = Math.abs(dy);
+  const desired = adx > ady ? (dx>0?'right':'left') : (dy>0?'down':'up');
+  setDir(desired);
+}
+
 function setDir(d) {
   const opposite = { up:'down', down:'up', left:'right', right:'left' };
   if (d !== opposite[dir]) nextDir = d;
 }
-document.getElementById('buttons').addEventListener('touchstart', e => {
-  const t = e.target.closest('.btn'); if (t && t.dataset.dir) { setDir(t.dataset.dir); e.preventDefault(); }
-}, {passive:false});
-document.getElementById('buttons').addEventListener('click', e => {
-  const t = e.target.closest('.btn'); if (t && t.dataset.dir) setDir(t.dataset.dir);
-});
+
+// Keyboard (optional)
 window.addEventListener('keydown', e => {
   const k=e.key;
   if (k==='ArrowUp') setDir('up');
@@ -194,66 +141,8 @@ window.addEventListener('keydown', e => {
   else if (k.toLowerCase()==='m') toggleMute();
 });
 
-// Swipe + finger steering
-let swipeStart=null;
-let steerActive=false;
-let steerPoint=null;
-canvas.addEventListener('touchstart', e=>{
-  const t=e.changedTouches[0];
-  swipeStart={x:t.clientX,y:t.clientY};
-  steerActive=true;
-  steerPoint={x:t.clientX,y:t.clientY};
-  e.preventDefault();
-},{passive:false});
-canvas.addEventListener('touchmove', e=>{
-  const t=e.changedTouches[0];
-  if (!swipeStart) swipeStart={x:t.clientX,y:t.clientY};
-  steerActive=true;
-  steerPoint={x:t.clientX,y:t.clientY};
-  // continuous steering toward finger
-  steerToward(steerPoint);
-  e.preventDefault();
-},{passive:false});
-canvas.addEventListener('touchend', e=>{
-  swipeStart=null;
-  steerActive=false;
-  steerPoint=null;
-  e.preventDefault();
-},{passive:false});
-
-function steerToward(pt){
-  // map finger point to canvas coordinates
-  const rect = canvas.getBoundingClientRect();
-  const fx = (pt.x - rect.left) / rect.width * CANVAS_SIZE;
-  const fy = (pt.y - rect.top) / rect.height * CANVAS_SIZE;
-  const head = { x: player.body[0].x*CELL + CELL/2, y: player.body[0].y*CELL + CELL/2 };
-  // account for wrap: choose the nearest wrapped position of finger relative to head
-  let dx = fx - head.x;
-  let dy = fy - head.y;
-  if (dx > CANVAS_SIZE/2) dx -= CANVAS_SIZE;
-  if (dx < -CANVAS_SIZE/2) dx += CANVAS_SIZE;
-  if (dy > CANVAS_SIZE/2) dy -= CANVAS_SIZE;
-  if (dy < -CANVAS_SIZE/2) dy += CANVAS_SIZE;
-  const adx = Math.abs(dx), ady = Math.abs(dy);
-  const desired = adx > ady ? (dx>0?'right':'left') : (dy>0?'down':'up');
-  setDir(desired);
-}
-
-pauseBtn.addEventListener('click', togglePause);
-restartBtn.addEventListener('click', ()=>reset());
-muteBtn.addEventListener('click', toggleMute);
-
-function togglePause() {
-  if (dead) reset();
-  else paused = !paused;
-  pauseBtn.textContent = paused ? '▶︎' : '⏸︎';
-}
-function toggleMute() {
-  audio.enabled = !audio.enabled;
-  if (audio.enabled && !audio.ctx) initAudio();
-  muteBtn.textContent = audio.enabled ? '🔊' : '🔇';
-  muteBtn.setAttribute('aria-pressed', (!audio.enabled).toString());
-}
+function togglePause(){ if (dead) reset(); else paused=!paused; }
+function toggleMute(){ audio.enabled=!audio.enabled; if (audio.enabled && !audio.ctx) initAudio(); }
 
 // ---- Game loop ----
 requestAnimationFrame(loop);
@@ -287,37 +176,22 @@ function moveSnake(snake, d) {
   return { newHead: next, oldTail };
 }
 
-function undoMove(snake) {
-  snake.body.shift();
-  if (snake.lastTail) snake.body.push(snake.lastTail);
-}
-
-function growSnake(snake, n=1) {
-  for (let i=0;i<n;i++) {
-    const tail = snake.body[snake.body.length-1];
-    snake.body.push({...tail});
-  }
-}
+function undoMove(snake) { snake.body.shift(); if (snake.lastTail) snake.body.push(snake.lastTail); }
+function growSnake(snake, n=1) { for (let i=0;i<n;i++){ const tail=snake.body[snake.body.length-1]; snake.body.push({...tail}); }}
 
 function step() {
-  // Player move
   dir = nextDir;
   moveSnake(player, dir);
 
-  // Apples
+  // Apple eat
   const aIndex = apples.findIndex(p => cellEq(p, player.body[0]));
   if (aIndex !== -1) {
-    apples.splice(aIndex,1);
-    napplesEl.textContent = apples.length;
-    sfxApple();
-    score += 1; scoreEl.textContent = score;
-    if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem('best-score-v6', best); }
-    growSnake(player, 1);
-    spawnApple();
-    napplesEl.textContent = apples.length;
+    apples.splice(aIndex,1); sfxApple();
+    score += 1; if (score>best){ best=score; localStorage.setItem('best-score-v7', best); }
+    growSnake(player, 1); spawnApple();
   }
 
-  // AI snakes slower
+  // AI move (slower)
   if (tickCount % AI_STEP_INTERVAL === 0) {
     for (const s of npcs) {
       const opposite = { up:'down', down:'up', left:'right', right:'left' };
@@ -327,16 +201,12 @@ function step() {
       }
       s.dir = s.nextDir;
       const { newHead } = moveSnake(s, s.dir);
-      // AI bounce off player's body
-      if (player.body.some(p=>cellEq(p, newHead))) {
-        sfxBounce();
-        undoMove(s);
-        s.dir = opposite[s.dir]; s.nextDir = s.dir;
-      }
+      // Bounce off player
+      if (player.body.some(p=>cellEq(p, newHead))) { sfxBounce(); undoMove(s); s.dir = opposite[s.dir]; s.nextDir = s.dir; }
     }
   }
 
-  // Player with self
+  // Player self
   for (let i=1;i<player.body.length;i++) if (cellEq(player.body[0], player.body[i])) return gameOver();
 
   // Player vs NPCs
@@ -344,18 +214,15 @@ function step() {
     const npc = npcs[i];
     const idx = npc.body.findIndex(p => cellEq(p, player.body[0]));
     if (idx !== -1) {
-      const playerLen = player.body.length;
-      const targetLen = npc.body.length;
+      const playerLen = player.body.length, targetLen = npc.body.length;
       if (playerLen >= targetLen) {
         sfxEatSnake();
-        score += targetLen; scoreEl.textContent = score;
-        if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem('best-score-v6', best); }
+        score += targetLen; if (score>best){ best=score; localStorage.setItem('best-score-v7', best); }
         growSnake(player, Math.min(targetLen, 40));
         replaceNPC(npc);
         return;
       } else {
-        sfxBounce();
-        undoMove(player);
+        sfxBounce(); undoMove(player);
         const opposite = { up:'down', down:'up', left:'right', right:'left' };
         dir = opposite[dir]; nextDir = dir;
         return;
@@ -364,168 +231,103 @@ function step() {
   }
 }
 
-function replaceNPC(old) {
-  const idx = npcs.indexOf(old);
-  if (idx !== -1) npcs.splice(idx,1);
-  spawnNPC();
-  nsnakesEl.textContent = npcs.length;
-}
-
-function spawnNPC() {
-  if (npcs.length >= NPC_MAX) return;
-  const len = 3 + rnd(6); // 3..8
-  const s = newSnake(len, AI_STYLE, [player, ...npcs]);
-  s.ai = true;
-  npcs.push(s);
-}
-
-function spawnApple() {
-  for (let i=0;i<500;i++) {
-    const pos = {x:rnd(COLS), y:rnd(ROWS)};
-    const occupied = anyAt(pos, player.body) || npcs.some(s=>anyAt(pos, s.body)) || anyAt(pos, apples||[]);
-    if (!occupied) { apples.push(pos); return; }
-  }
-}
+function replaceNPC(old){ const idx=npcs.indexOf(old); if(idx!==-1) npcs.splice(idx,1); spawnNPC(); }
+function spawnNPC(){ if (npcs.length>=2) return; const len = 3 + rnd(6); const s = newSnake(len, AI_STYLE, [player, ...npcs]); s.ai=true; npcs.push(s); }
+function spawnApple(){ for(let i=0;i<500;i++){ const pos={x:rnd(COLS), y:rnd(ROWS)}; const occupied=anyAt(pos, player.body) || npcs.some(s=>anyAt(pos, s.body)) || anyAt(pos, apples||[]); if(!occupied){ apples.push(pos); return; } }}
 
 // ---- Rendering ----
 function render() {
-  ctx.fillStyle = '#061013';
-  ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
+  // clear
+  ctx.fillStyle = '#061013'; ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
 
-  // grid
-  ctx.save();
-  ctx.globalAlpha = 0.10;
-  ctx.strokeStyle = '#0f1b1f';
-  ctx.lineWidth = 1;
+  // subtle grid
+  ctx.save(); ctx.globalAlpha = 0.10; ctx.strokeStyle = '#0f1b1f'; ctx.lineWidth = 1;
   for (let x=1;x<COLS;x++) { ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,CANVAS_SIZE); ctx.stroke(); }
   for (let y=1;y<ROWS;y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(CANVAS_SIZE,y*CELL); ctx.stroke(); }
   ctx.restore();
 
+  // apples
   for (const p of apples) drawApple(p.x, p.y);
 
+  // snakes
   for (const s of npcs) drawSnakeNeon(s);
   drawSnakeNeon(player, true);
+
+  // on-canvas HUD
+  drawHUD();
 
   if (paused) overlay('Paused');
   if (dead) overlay('Game Over');
 }
 
-// ---- Neon striped continuous snakes with wrap-unwrapped path ----
+// Continuous neon striped snakes
 function drawSnakeNeon(s, isPlayer=false) {
   if (s.body.length < 2) return;
-  let pts = s.body.map(seg => ({
-    x: seg.x*CELL + CELL/2,
-    y: seg.y*CELL + CELL/2
-  }));
+  let pts = s.body.map(seg => ({ x: seg.x*CELL + CELL/2, y: seg.y*CELL + CELL/2 }));
   pts = unwrapPath(pts);
 
-  // Outer glow
-  ctx.save();
-  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  ctx.shadowBlur = Math.max(8, CELL*0.8);
-  ctx.shadowColor = isPlayer ? s.style.neon : s.style.neon;
-  ctx.strokeStyle = s.style.neon;
-  ctx.lineWidth = Math.max(6, CELL*0.78);
-  drawSmoothPath(pts);
-  ctx.restore();
-
-  // Edge stroke
-  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  ctx.lineWidth = Math.max(6, CELL*0.72);
-  ctx.strokeStyle = s.style.edge;
-  drawSmoothPath(pts);
-
-  // Base body
-  ctx.lineWidth = Math.max(4, CELL*0.62);
-  ctx.strokeStyle = s.style.base;
-  drawSmoothPath(pts);
-
-  // Stripes: draw along segments with thinner stroke alternating color
-  ctx.lineWidth = Math.max(2, CELL*0.36);
-  for (let i=0;i<pts.length-1;i++) {
-    const p1 = pts[i], p2 = pts[i+1];
-    ctx.strokeStyle = (i%2===0) ? s.style.stripe : 'rgba(0,0,0,0.15)';
-    ctx.beginPath();
-    ctx.moveTo(p1.x, p1.y);
-    ctx.lineTo(p2.x, p2.y);
-    ctx.stroke();
-  }
-
-  // Gloss highlight
-  ctx.globalAlpha = 0.35;
-  ctx.lineWidth = Math.max(2, CELL*0.18);
-  ctx.strokeStyle = s.style.highlight;
-  drawSmoothPath(pts.map(p=>({x:p.x, y:p.y-1})));
-  ctx.globalAlpha = 1;
-
-  // Eyes on head
-  const head = pts[0];
-  const eye = Math.max(2, Math.floor(CELL*0.08));
-  ctx.fillStyle = '#000';
-  ctx.beginPath(); ctx.arc(head.x - CELL*0.18, head.y - CELL*0.18, eye, 0, Math.PI*2); ctx.fill();
+  // glow
+  ctx.save(); ctx.lineJoin='round'; ctx.lineCap='round'; ctx.shadowBlur=Math.max(8, CELL*0.8); ctx.shadowColor=s.style.neon; ctx.strokeStyle=s.style.neon; ctx.lineWidth=Math.max(6, CELL*0.78); drawSmoothPath(pts); ctx.restore();
+  // edge
+  ctx.lineJoin='round'; ctx.lineCap='round'; ctx.lineWidth=Math.max(6, CELL*0.72); ctx.strokeStyle=s.style.edge; drawSmoothPath(pts);
+  // base
+  ctx.lineWidth=Math.max(4, CELL*0.62); ctx.strokeStyle=s.style.base; drawSmoothPath(pts);
+  // stripes
+  ctx.lineWidth=Math.max(2, CELL*0.36);
+  for (let i=0;i<pts.length-1;i++) { const p1=pts[i], p2=pts[i+1]; ctx.strokeStyle=(i%2===0)?s.style.stripe:'rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); }
+  // gloss
+  ctx.globalAlpha=0.35; ctx.lineWidth=Math.max(2, CELL*0.18); ctx.strokeStyle=s.style.highlight; drawSmoothPath(pts.map(p=>({x:p.x,y:p.y-1}))); ctx.globalAlpha=1;
+  // eyes
+  const head = pts[0]; const eye = Math.max(2, Math.floor(CELL*0.08));
+  ctx.fillStyle='#000'; ctx.beginPath(); ctx.arc(head.x - CELL*0.18, head.y - CELL*0.18, eye, 0, Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.arc(head.x + CELL*0.18, head.y - CELL*0.18, eye, 0, Math.PI*2); ctx.fill();
 }
 
 function unwrapPath(pts){
-  // Adjust successive points so that large jumps across the wrap are corrected
-  const res = [ {x:pts[0].x, y:pts[0].y} ];
-  for (let i=1;i<pts.length;i++){
-    let x = pts[i].x, y = pts[i].y;
-    let px = res[i-1].x, py = res[i-1].y;
-    let dx = x - px, dy = y - py;
-    if (dx > CANVAS_SIZE/2) x -= CANVAS_SIZE;
-    if (dx < -CANVAS_SIZE/2) x += CANVAS_SIZE;
-    if (dy > CANVAS_SIZE/2) y -= CANVAS_SIZE;
-    if (dy < -CANVAS_SIZE/2) y += CANVAS_SIZE;
-    res.push({x, y});
-  }
-  return res;
+  const res=[{x:pts[0].x,y:pts[0].y}];
+  for(let i=1;i<pts.length;i++){ let {x,y}=pts[i]; const px=res[i-1].x, py=res[i-1].y; let dx=x-px, dy=y-py;
+    if (dx > CANVAS_SIZE/2) x -= CANVAS_SIZE; if (dx < -CANVAS_SIZE/2) x += CANVAS_SIZE;
+    if (dy > CANVAS_SIZE/2) y -= CANVAS_SIZE; if (dy < -CANVAS_SIZE/2) y += CANVAS_SIZE;
+    res.push({x,y});
+  } return res;
 }
 
-function drawSmoothPath(pts) {
-  if (pts.length < 2) return;
-  ctx.beginPath();
-  ctx.moveTo(pts[0].x, pts[0].y);
-  for (let i=0; i<pts.length-1; i++) {
-    const p0 = pts[Math.max(0, i-1)];
-    const p1 = pts[i];
-    const p2 = pts[i+1];
-    const p3 = pts[Math.min(pts.length-1, i+2)];
-    const cp1x = p1.x + (p2.x - p0.x) / 6;
-    const cp1y = p1.y + (p2.y - p0.y) / 6;
-    const cp2x = p2.x - (p3.x - p1.x) / 6;
-    const cp2y = p2.y - (p3.y - p1.y) / 6;
+function drawSmoothPath(pts){ if (pts.length<2) return; ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+  for(let i=0;i<pts.length-1;i++){ const p0=pts[Math.max(0,i-1)], p1=pts[i], p2=pts[i+1], p3=pts[Math.min(pts.length-1,i+2)];
+    const cp1x = p1.x + (p2.x - p0.x)/6, cp1y = p1.y + (p2.y - p0.y)/6;
+    const cp2x = p2.x - (p3.x - p1.x)/6, cp2y = p2.y - (p3.y - p1.y)/6;
     ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
-  }
-  ctx.stroke();
+  } ctx.stroke();
 }
 
-// ---- Apple (no leaf) ----
+// Apples (no leaves)
 function drawApple(cx, cy) {
-  const x = cx*CELL + CELL/2;
-  const y = cy*CELL + CELL/2;
-  const r = Math.max(4, Math.floor(CELL*0.22));
-  ctx.fillStyle = '#e74c3c';
-  ctx.beginPath(); ctx.arc(x-2, y, r*0.95, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(x+2, y, r*0.95, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
-  ctx.beginPath(); ctx.arc(x-4, y-3, r*0.45, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = '#5d3a1a'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(x, y-r*1.1); ctx.lineTo(x+2, y-r*1.45); ctx.stroke();
+  const x = cx*CELL + CELL/2; const y = cy*CELL + CELL/2; const r = Math.max(4, Math.floor(CELL*0.22));
+  ctx.fillStyle='#e74c3c'; ctx.beginPath(); ctx.arc(x-2,y,r*0.95,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+2,y,r*0.95,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,0.15)'; ctx.beginPath(); ctx.arc(x-4,y-3,r*0.45,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#5d3a1a'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x, y-r*1.1); ctx.lineTo(x+2, y-r*1.45); ctx.stroke();
+}
+
+// On-canvas HUD
+function drawHUD(){
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(8,8,150,46);
+  ctx.fillStyle='#fff'; ctx.font='bold 14px -apple-system, system-ui, Segoe UI, Roboto';
+  ctx.fillText('Score: ' + score, 16, 26);
+  ctx.fillText('Best: ' + best, 16, 44);
+  ctx.restore();
 }
 
 function overlay(text) {
-  ctx.fillStyle = 'rgba(0,0,0,.55)';
-  ctx.fillRect(0,0,canvas.width, canvas.height);
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 28px system-ui, -apple-system, Segoe UI, Roboto';
-  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0,0,canvas.width, canvas.height);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 28px -apple-system, system-ui, Segoe UI, Roboto'; ctx.textAlign = 'center';
   ctx.fillText(text, canvas.width/2, canvas.height/2);
-  ctx.font = '14px system-ui, -apple-system, Segoe UI, Roboto';
-  ctx.fillText('Tap ▶︎ to resume or ↻ to restart', canvas.width/2, canvas.height/2 + 28);
+  ctx.font = '14px -apple-system, system-ui, Segoe UI, Roboto';
+  ctx.fillText('Tap to resume / restart', canvas.width/2, canvas.height/2 + 28);
 }
 
-function gameOver() { dead = true; sfxDead(); }
+function gameOver(){ dead=true; sfxDead(); }
 </script>
 </body>
 </html>

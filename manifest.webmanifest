@@ -1,10 +1,10 @@
 {
-  "name": "Snakes v6",
+  "name": "Snakes v7",
   "short_name": "Snakes",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#0b0e0f",
-  "theme_color": "#0b0e0f",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "icons": [
     {
       "src": "icons/icon-192.png",
