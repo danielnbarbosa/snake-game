@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <title>Snakes v4</title>
+  <title>Snakes v5</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
@@ -45,8 +45,8 @@
       <div class="ghost"></div><div class="ghost"></div><div class="ghost"></div>
     </div>
     <div id="tip">
-      Wrap-around walls are back. Eat <b>apples</b> to grow.
-      Combat rules: if your snake is <b>larger or equal</b>, you can eat other snakes <i>from anywhere</i> (head, side, tail). If you're <b>smaller</b>, you can't eat them—you just bounce off.
+      Wrap-around walls. Apples grow you. AI snakes bounce off you (no clipping). Continuous-body snakes with shiny gradients.
+      Combat: if you're <b>larger or equal</b> you can eat other snakes from anywhere; if <b>smaller</b> you bounce off them.
     </div>
   </div>
 
@@ -89,16 +89,16 @@ window.addEventListener('mousedown', () => { if (!audio.ctx && audio.enabled) { 
 const COLS = 24, ROWS = 24;
 const CELL = 20;
 const CANVAS_SIZE = 480;
-const TICK_MS_PLAYER = 190;        // slower player
-const AI_STEP_INTERVAL = 2;        // AI moves once every N player ticks (slower than player)
-const NPC_MAX = 2;                 // at most two AI snakes
-const PLAYER_START_LEN = 3;        // small start
-const APPLE_COUNT = 5;             // apples on board
+const TICK_MS_PLAYER = 190;
+const AI_STEP_INTERVAL = 2;   // AI are slower
+const NPC_MAX = 2;
+const PLAYER_START_LEN = 3;
+const APPLE_COUNT = 5;
 const MAX_LEN = COLS*ROWS - 1;
 
 // Colors: player vs AI
-const PLAYER_SKIN = { dark:'#0f3a23', mid:'#1f6b3c', lite:'#3fd47a' };
-const AI_SKIN      = { dark:'#3a1f0f', mid:'#6b3c1f', lite:'#e69a58' };
+const PLAYER_COLORS = { base:'#41d281', edge:'#0b3a25', highlight:'rgba(255,255,255,0.25)' };
+const AI_COLORS      = { base:'#e8a45a', edge:'#3a1f0f', highlight:'rgba(255,255,255,0.20)' };
 
 // ---- State ----
 const canvas = document.getElementById('game');
@@ -114,7 +114,7 @@ const muteBtn = document.getElementById('mute');
 let player, npcs, apples, dir, nextDir, score, best, paused, dead;
 let tickAccum = 0, lastTs = performance.now(), tickCount = 0;
 
-best = parseInt(localStorage.getItem('best-score-v4') || '0', 10);
+best = parseInt(localStorage.getItem('best-score-v5') || '0', 10);
 bestEl.textContent = best;
 
 // Fit canvas CSS size
@@ -134,7 +134,7 @@ function wrap(v, max){ return (v + max) % max; }
 function cellEq(a,b){ return a.x===b.x && a.y===b.y; }
 function anyAt(pos, arr){ return arr.some(p=>cellEq(p,pos)); }
 
-function newSnake(len, skin, avoid=[]) {
+function newSnake(len, colors, avoid=[]) {
   for (let tries=0; tries<200; tries++) {
     const horizontal = Math.random() < 0.5;
     const x = rnd(COLS), y = rnd(ROWS);
@@ -151,17 +151,16 @@ function newSnake(len, skin, avoid=[]) {
       body.push(pos);
     }
     if (body.length===len) {
-      return { body, dir, nextDir: dir, skin, ai: false, lastTail: null };
+      return { body, dir, nextDir: dir, colors, ai: false, lastTail: null };
     }
   }
-  // fallback center
-  return { body:[{x:Math.floor(COLS/2), y:Math.floor(ROWS/2)}], dir:'right', nextDir:'right', skin, ai:false, lastTail:null };
+  return { body:[{x:Math.floor(COLS/2), y:Math.floor(ROWS/2)}], dir:'right', nextDir:'right', colors, ai:false, lastTail:null };
 }
 
 function reset() {
   score = 0; scoreEl.textContent = score;
   paused = false; dead = false;
-  player = newSnake(PLAYER_START_LEN, PLAYER_SKIN);
+  player = newSnake(PLAYER_START_LEN, PLAYER_COLORS);
   npcs = [];
   for (let i=0;i<NPC_MAX;i++) spawnNPC();
   nsnakesEl.textContent = npcs.length;
@@ -252,7 +251,6 @@ function moveSnake(snake, d) {
 }
 
 function undoMove(snake) {
-  // remove the last inserted head and restore the lastTail
   snake.body.shift();
   if (snake.lastTail) snake.body.push(snake.lastTail);
 }
@@ -270,14 +268,14 @@ function step() {
   dir = nextDir;
   moveSnake(player, dir);
 
-  // Apples
+  // Apples (grow)
   const aIndex = apples.findIndex(p => cellEq(p, player.body[0]));
   if (aIndex !== -1) {
     apples.splice(aIndex,1);
     napplesEl.textContent = apples.length;
     sfxApple();
     score += 1; scoreEl.textContent = score;
-    if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem('best-score-v4', best); }
+    if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem('best-score-v5', best); }
     growSnake(player, 1);
     spawnApple();
     napplesEl.textContent = apples.length;
@@ -286,41 +284,43 @@ function step() {
   // AI snakes move slower: only on certain ticks
   if (tickCount % AI_STEP_INTERVAL === 0) {
     for (const s of npcs) {
-      // simple wandering AI
       const opposite = { up:'down', down:'up', left:'right', right:'left' };
       if (Math.random() < 0.25) {
         const options = ['up','down','left','right'].filter(x=>x!==opposite[s.dir]);
         s.nextDir = options[rnd(options.length)];
       }
       s.dir = s.nextDir;
-      moveSnake(s, s.dir);
+      const { newHead } = moveSnake(s, s.dir);
+      // AI bounce off player's body (no clipping)
+      if (player.body.some(p=>cellEq(p, newHead))) {
+        sfxBounce();
+        undoMove(s);
+        s.dir = opposite[s.dir]; s.nextDir = s.dir;
+      }
     }
   }
 
   // Player with self
   for (let i=1;i<player.body.length;i++) if (cellEq(player.body[0], player.body[i])) return gameOver();
 
-  // Player vs NPCs collisions with new rules
+  // Player vs NPCs collisions (player head contacts any part of NPC)
   for (let i=0;i<npcs.length;i++) {
     const npc = npcs[i];
-    // Did player's head collide with any part of npc?
     const idx = npc.body.findIndex(p => cellEq(p, player.body[0]));
     if (idx !== -1) {
       const playerLen = player.body.length;
       const targetLen = npc.body.length;
       if (playerLen >= targetLen) {
-        // Eat anywhere
         sfxEatSnake();
         score += targetLen; scoreEl.textContent = score;
-        if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem('best-score-v4', best); }
+        if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem('best-score-v5', best); }
         growSnake(player, Math.min(targetLen, 40));
         replaceNPC(npc);
         return;
       } else {
-        // Smaller -> bounce (no death): undo the move & reverse direction
+        // smaller -> bounce (no death)
         sfxBounce();
         undoMove(player);
-        // reverse direction away from impact
         const opposite = { up:'down', down:'up', left:'right', right:'left' };
         dir = opposite[dir]; nextDir = dir;
         return;
@@ -339,13 +339,12 @@ function replaceNPC(old) {
 function spawnNPC() {
   if (npcs.length >= NPC_MAX) return;
   const len = 3 + rnd(6); // 3..8
-  const s = newSnake(len, AI_SKIN, [player, ...npcs]);
+  const s = newSnake(len, AI_COLORS, [player, ...npcs]);
   s.ai = true;
   npcs.push(s);
 }
 
 function spawnApple() {
-  // ensure not spawning inside snakes or over existing apples
   for (let i=0;i<500;i++) {
     const pos = {x:rnd(COLS), y:rnd(ROWS)};
     const occupied = anyAt(pos, player.body) || npcs.some(s=>anyAt(pos, s.body)) || anyAt(pos, apples||[]);
@@ -355,11 +354,9 @@ function spawnApple() {
 
 // ---- Rendering ----
 function render() {
-  // background
   ctx.fillStyle = '#061013';
   ctx.fillRect(0,0,CANVAS_SIZE,CANVAS_SIZE);
 
-  // subtle grid
   ctx.save();
   ctx.globalAlpha = 0.10;
   ctx.strokeStyle = '#0f1b1f';
@@ -368,18 +365,89 @@ function render() {
   for (let y=1;y<ROWS;y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(CANVAS_SIZE,y*CELL); ctx.stroke(); }
   ctx.restore();
 
-  // apples
   for (const p of apples) drawApple(p.x, p.y);
 
-  // draw NPCs
-  for (const s of npcs) drawSnake(s);
-  // draw player on top
-  drawSnake(player, true);
+  for (const s of npcs) drawSnakeContinuous(s);
+  drawSnakeContinuous(player, true);
 
   if (paused) overlay('Paused');
   if (dead) overlay('Game Over');
 }
 
+// ---- Fancy continuous snake rendering ----
+function drawSnakeContinuous(s, isPlayer=false) {
+  if (s.body.length < 2) return;
+  const pts = s.body.map(seg => ({
+    x: seg.x*CELL + CELL/2,
+    y: seg.y*CELL + CELL/2
+  }));
+
+  // Smooth path using simple Catmull-Rom to Quadratic Beziers approximation
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  // Outer edge stroke
+  ctx.lineWidth = Math.max(6, CELL*0.78);
+  ctx.strokeStyle = s.colors.edge;
+  drawSmoothPath(pts);
+
+  // Core body gradient
+  const grad = ctx.createLinearGradient(pts[0].x, pts[0].y, pts[pts.length-1].x, pts[pts.length-1].y);
+  grad.addColorStop(0, s.colors.base);
+  grad.addColorStop(1, s.colors.base);
+  ctx.lineWidth = Math.max(4, CELL*0.66);
+  ctx.strokeStyle = grad;
+  drawSmoothPath(pts);
+
+  // Highlight along top for glossy effect
+  ctx.globalAlpha = 0.35;
+  ctx.lineWidth = Math.max(2, CELL*0.18);
+  ctx.strokeStyle = s.colors.highlight;
+  drawSmoothPath(pts.map(p=>({x:p.x, y:p.y-1})));
+  ctx.globalAlpha = 1;
+
+  // Eyes on head
+  const head = pts[0];
+  const eye = Math.max(2, Math.floor(CELL*0.08));
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(head.x - CELL*0.18, head.y - CELL*0.18, eye, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(head.x + CELL*0.18, head.y - CELL*0.18, eye, 0, Math.PI*2); ctx.fill();
+
+  // Occasional tongue (player only)
+  if (isPlayer && Math.random()<0.07) {
+    ctx.strokeStyle = '#d24';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(head.x, head.y);
+    let tx=head.x, ty=head.y;
+    const d = (typeof nextDir!=='undefined') ? nextDir : 'right';
+    if (d==='left') tx -= CELL*0.35;
+    if (d==='right') tx += CELL*0.35;
+    if (d==='up') ty -= CELL*0.35;
+    if (d==='down') ty += CELL*0.35;
+    ctx.lineTo(tx, ty); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx+2, ty+2); ctx.moveTo(tx, ty); ctx.lineTo(tx-2, ty-2); ctx.stroke();
+  }
+}
+
+function drawSmoothPath(pts) {
+  if (pts.length < 2) return;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i=0; i<pts.length-1; i++) {
+    const p0 = pts[Math.max(0, i-1)];
+    const p1 = pts[i];
+    const p2 = pts[i+1];
+    const p3 = pts[Math.min(pts.length-1, i+2)];
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+  }
+  ctx.stroke();
+}
+
+// ---- Apple rendering (no leaf) ----
 function drawApple(cx, cy) {
   const x = cx*CELL + CELL/2;
   const y = cy*CELL + CELL/2;
@@ -391,76 +459,9 @@ function drawApple(cx, cy) {
   // highlight
   ctx.fillStyle = 'rgba(255,255,255,0.15)';
   ctx.beginPath(); ctx.arc(x-4, y-3, r*0.45, 0, Math.PI*2); ctx.fill();
-  // stem
+  // stem only (no leaves)
   ctx.strokeStyle = '#5d3a1a'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(x, y-r*1.1); ctx.lineTo(x+3, y-r*1.55); ctx.stroke();
-  // leaf
-  ctx.fillStyle = '#2ecc71';
-  ctx.beginPath();
-  ctx.ellipse(x+6, y-r*1.25, 3, 6, Math.PI/6, 0, Math.PI*2);
-  ctx.fill();
-}
-
-function drawSnake(s, isPlayer=false) {
-  // body
-  for (let i=s.body.length-1; i>=0; i--) {
-    const p = s.body[i];
-    const band = (i%4===0);
-    const col = band ? s.skin.dark : s.skin.mid;
-    drawScaleCell(p.x, p.y, col, isPlayer && i===0 ? 6 : 4);
-  }
-  // head + eyes
-  const head = s.body[0];
-  drawScaleCell(head.x, head.y, s.skin.lite, 8);
-  const cx = head.x*CELL + CELL/2;
-  const cy = head.y*CELL + CELL/2;
-  ctx.fillStyle = '#000';
-  const eye = Math.max(2, Math.floor(CELL*0.08));
-  ctx.beginPath(); ctx.arc(cx - CELL*0.18, cy - CELL*0.18, eye, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(cx + CELL*0.18, cy - CELL*0.18, eye, 0, Math.PI*2); ctx.fill();
-  // tongue (player only)
-  if (isPlayer && Math.random()<0.07) {
-    ctx.strokeStyle = '#d24';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(cx, cy);
-    let tx=cx, ty=cy;
-    const d = (typeof nextDir!=='undefined') ? nextDir : 'right';
-    if (d==='left') tx -= CELL*0.35;
-    if (d==='right') tx += CELL*0.35;
-    if (d==='up') ty -= CELL*0.35;
-    if (d==='down') ty += CELL*0.35;
-    ctx.lineTo(tx, ty); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx+2, ty+2); ctx.moveTo(tx, ty); ctx.lineTo(tx-2, ty-2); ctx.stroke();
-  }
-}
-
-function drawScaleCell(cx, cy, color, round=6) {
-  const pad = 2;
-  const x = cx*CELL+pad, y = cy*CELL+pad, w = CELL-2*pad, h = CELL-2*pad;
-  const grad = ctx.createLinearGradient(x, y, x+w, y+h);
-  grad.addColorStop(0, color);
-  grad.addColorStop(1, 'rgba(255,255,255,0.07)');
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  roundRect(ctx, x, y, w, h, round);
-  ctx.fill();
-  ctx.globalAlpha = 0.12;
-  ctx.fillStyle = '#000';
-  const step = Math.max(4, Math.floor(w/5));
-  for (let yy=y+2; yy<y+h-2; yy+=step) {
-    for (let xx=x+2; xx<x+w-2; xx+=step) {
-      ctx.fillRect(xx, yy, 1, 1);
-    }
-  }
-  ctx.globalAlpha = 1;
-}
-
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.moveTo(x+r, y);
-  ctx.arcTo(x+w, y, x+w, y+h, r);
-  ctx.arcTo(x+w, y+h, x, y+h, r);
-  ctx.arcTo(x, y+h, x, y, r);
-  ctx.arcTo(x, y, x+w, y, r);
+  ctx.beginPath(); ctx.moveTo(x, y-r*1.1); ctx.lineTo(x+2, y-r*1.45); ctx.stroke();
 }
 
 function overlay(text) {
