@@ -50,7 +50,7 @@ window.addEventListener('touchstart', () => { if (!audio.ctx && audio.enabled) i
 window.addEventListener('mousedown', () => { if (!audio.ctx && audio.enabled) initAudio(); });
 
 // ---- Logical board (square, non-stretched) ----
-const COLS = 24, ROWS = 24;
+const COLS = 12, ROWS = 12;
 const LOGICAL_SIZE = 480;     // draw space; we scale to device DPR & CSS 100vmin
 const CELL = LOGICAL_SIZE / COLS;
 
