@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <title>Snakes v9</title>
+  <title>Snakes v10</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
@@ -50,20 +50,20 @@ window.addEventListener('touchstart', () => { if (!audio.ctx && audio.enabled) i
 window.addEventListener('mousedown', () => { if (!audio.ctx && audio.enabled) initAudio(); });
 
 // ---- World & board ----
-const VIEW_SIZE = 480;          // viewport logical size (square)
-const COLS = 24, ROWS = 24;     // viewport logical grid for rendering helpers (kept for grid density)
+const VIEW_SIZE = 480;
+const COLS = 24, ROWS = 24;
 const CELL = VIEW_SIZE / COLS;
 
-const WORLD_COLS = 96;          // much larger world
+const WORLD_COLS = 96;
 const WORLD_ROWS = 96;
-const WORLD_W = WORLD_COLS * CELL;  // in logical px
+const WORLD_W = WORLD_COLS * CELL;
 const WORLD_H = WORLD_ROWS * CELL;
 
 const TICK_MS_PLAYER = 190;
 const AI_STEP_INTERVAL = 2;
-const NPC_MAX = 2;
+const NPC_MAX = 20;           // increased AI snakes
 const PLAYER_START_LEN = 3;
-const APPLE_COUNT = 40;         // more apples for big world
+const APPLE_COUNT = 60;       // bump apples for more activity
 
 const PLAYER_STYLE = { base:'#41d281', edge:'#072416', highlight:'rgba(255,255,255,0.25)', neon:'#4dff9a', stripe:'#1a834f' };
 const AI_STYLE      = { base:'#e8a45a', edge:'#3a1f0f', highlight:'rgba(255,255,255,0.20)', neon:'#ffc26b', stripe:'#8a4a16' };
@@ -71,10 +71,10 @@ const AI_STYLE      = { base:'#e8a45a', edge:'#3a1f0f', highlight:'rgba(255,255,
 // ---- State ----
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-let score=0, best=parseInt(localStorage.getItem('best-score-v9')||'0',10), paused=false, dead=false;
+let score=0, best=parseInt(localStorage.getItem('best-score-v10')||'0',10), paused=false, dead=false;
 let player, npcs, apples, dir, nextDir;
 let tickAccum = 0, lastTs = performance.now(), tickCount = 0;
-let camX = 0, camY = 0; // camera top-left in logical px
+let camX = 0, camY = 0;
 
 // Finger steering
 let steerPoint=null;
@@ -102,7 +102,7 @@ function cellEq(a,b){ return a.x===b.x && a.y===b.y; }
 function anyAt(pos, arr){ return arr.some(p=>cellEq(p,pos)); }
 
 function newSnake(len, style, avoid=[]) {
-  for (let tries=0; tries<400; tries++) {
+  for (let tries=0; tries<600; tries++) {
     const horizontal = Math.random() < 0.5;
     const x = rnd(WORLD_COLS), y = rnd(WORLD_ROWS);
     const dir = horizontal ? (Math.random()<0.5?'left':'right') : (Math.random()<0.5?'up':'down');
@@ -141,7 +141,7 @@ function reset() {
 }
 reset();
 
-// Steering (drag anywhere)
+// Steering
 canvas.addEventListener('touchstart', e=>{
   const t=e.changedTouches[0];
   if (dead) { reset(); return; }
@@ -163,7 +163,6 @@ canvas.addEventListener('mousedown', e=>{
 
 function steerToward(pt){
   const rect = canvas.getBoundingClientRect();
-  // Convert finger to world logical px by adding camera offset
   const fx = (pt.x - rect.left) / rect.width * VIEW_SIZE + camX;
   const fy = (pt.y - rect.top) / rect.height * VIEW_SIZE + camY;
   const head = { x: player.body[0].x*CELL + CELL/2, y: player.body[0].y*CELL + CELL/2 };
@@ -173,12 +172,8 @@ function steerToward(pt){
   setDir(desired);
 }
 
-function setDir(d) {
-  const opposite = { up:'down', down:'up', left:'right', right:'left' };
-  if (d !== opposite[dir]) nextDir = d;
-}
+function setDir(d) { const opposite = { up:'down', down:'up', left:'right', right:'left' }; if (d !== opposite[dir]) nextDir = d; }
 
-// Keyboard (optional)
 window.addEventListener('keydown', e => {
   const k=e.key;
   if (k==='ArrowUp') setDir('up');
@@ -218,7 +213,6 @@ function tryMoveSnake(snake, d, bounceOnWall=true, isPlayer=false) {
   const next = nextHead(snake.body[0], d);
   if (!inBounds(next.x, next.y)) {
     if (bounceOnWall) {
-      // bounce: reverse direction, no movement this tick
       const opposite = { up:'down', down:'up', left:'right', right:'left' };
       snake.nextDir = opposite[d];
       snake.dir = snake.nextDir;
@@ -247,7 +241,7 @@ function step() {
   const aIndex = apples.findIndex(p => cellEq(p, player.body[0]));
   if (aIndex !== -1) {
     apples.splice(aIndex,1); sfxApple();
-    score += 1; if (score>best){ best=score; localStorage.setItem('best-score-v9', best); }
+    score += 1; if (score>best){ best=score; localStorage.setItem('best-score-v10', best); }
     growSnake(player, 1); spawnApple();
   }
 
@@ -261,7 +255,7 @@ function step() {
       }
       s.dir = s.nextDir;
       const moved = tryMoveSnake(s, s.dir, true, false);
-      // Bounce off player body (no clipping)
+      // Bounce off player body
       const newHead = s.body[0];
       if (player.body.some(p=>cellEq(p, newHead))) {
         sfxBounce();
@@ -282,7 +276,7 @@ function step() {
       const playerLen = player.body.length, targetLen = npc.body.length;
       if (playerLen >= targetLen) {
         sfxEatSnake();
-        score += targetLen; if (score>best){ best=score; localStorage.setItem('best-score-v9', best); }
+        score += targetLen; if (score>best){ best=score; localStorage.setItem('best-score-v10', best); }
         growSnake(player, Math.min(targetLen, 40));
         replaceNPC(npc);
         return;
@@ -298,14 +292,13 @@ function step() {
 
 function replaceNPC(old){ const idx=npcs.indexOf(old); if(idx!==-1) npcs.splice(idx,1); spawnNPC(); }
 function spawnNPC(){ if (npcs.length>=NPC_MAX) return; const len = 3 + rnd(6); const s = newSnake(len, AI_STYLE, [player, ...npcs]); s.ai=true; npcs.push(s); }
-function spawnApple(){ for(let i=0;i<2000;i++){ const pos={x:rnd(WORLD_COLS), y:rnd(WORLD_ROWS)}; const occupied=anyAt(pos, player.body) || npcs.some(s=>anyAt(pos, s.body)) || anyAt(pos, apples||[]); if(!occupied){ apples.push(pos); return; } }}
+function spawnApple(){ for(let i=0;i<3000;i++){ const pos={x:rnd(WORLD_COLS), y:rnd(WORLD_ROWS)}; const occupied=anyAt(pos, player.body) || npcs.some(s=>anyAt(pos, s.body)) || anyAt(pos, apples||[]); if(!occupied){ apples.push(pos); return; } }}
 
 // ---- Rendering (camera) ----
 function render() {
-  // clear viewport
   ctx.fillStyle = '#061013'; ctx.fillRect(0,0,VIEW_SIZE,VIEW_SIZE);
 
-  // grid within camera
+  // grid
   ctx.save();
   ctx.globalAlpha = 0.10; ctx.strokeStyle = '#0f1b1f'; ctx.lineWidth = 1;
   const startCol = Math.floor(camX / CELL);
@@ -322,6 +315,9 @@ function render() {
   }
   ctx.restore();
 
+  // world border wall (blue glow)
+  drawWorldBorder();
+
   // apples
   for (const p of apples) drawAppleWorld(p.x, p.y);
 
@@ -336,6 +332,19 @@ function render() {
   if (dead) overlay('Game Over');
 }
 
+function drawWorldBorder(){
+  const x = -camX, y = -camY, w = WORLD_W, h = WORLD_H;
+  // glow
+  ctx.save();
+  ctx.shadowBlur = 12; ctx.shadowColor = '#3aa1ff';
+  ctx.strokeStyle = '#3aa1ff'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.rect(x+2, y+2, w-4, h-4); ctx.stroke();
+  ctx.restore();
+  // solid inner stroke
+  ctx.strokeStyle = '#1f6fd6'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.rect(x+3, y+3, w-6, h-6); ctx.stroke();
+}
+
 function worldToScreen(x, y){
   return { x: x*CELL - camX + CELL/2, y: y*CELL - camY + CELL/2 };
 }
@@ -343,18 +352,12 @@ function worldToScreen(x, y){
 function drawSnakeNeonWorld(s, isPlayer=false) {
   if (s.body.length < 2) return;
   let pts = s.body.map(seg => worldToScreen(seg.x, seg.y));
-  // glow
   ctx.save(); ctx.lineJoin='round'; ctx.lineCap='round'; ctx.shadowBlur=Math.max(8, CELL*0.8); ctx.shadowColor=s.style.neon; ctx.strokeStyle=s.style.neon; ctx.lineWidth=Math.max(6, CELL*0.78); drawSmoothPath(pts); ctx.restore();
-  // edge
   ctx.lineJoin='round'; ctx.lineCap='round'; ctx.lineWidth=Math.max(6, CELL*0.72); ctx.strokeStyle=s.style.edge; drawSmoothPath(pts);
-  // base
   ctx.lineWidth=Math.max(4, CELL*0.62); ctx.strokeStyle=s.style.base; drawSmoothPath(pts);
-  // stripes
   ctx.lineWidth=Math.max(2, CELL*0.36);
   for (let i=0;i<pts.length-1;i++) { const p1=pts[i], p2=pts[i+1]; ctx.strokeStyle=(i%2===0)?s.style.stripe:'rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke(); }
-  // gloss
   ctx.globalAlpha=0.35; ctx.lineWidth=Math.max(2, CELL*0.18); ctx.strokeStyle=s.style.highlight; drawSmoothPath(pts.map(p=>({x:p.x,y:p.y-1}))); ctx.globalAlpha=1;
-  // eyes
   const head = pts[0]; const eye = Math.max(2, Math.floor(CELL*0.08));
   ctx.fillStyle='#000'; ctx.beginPath(); ctx.arc(head.x - CELL*0.18, head.y - CELL*0.18, eye, 0, Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.arc(head.x + CELL*0.18, head.y - CELL*0.18, eye, 0, Math.PI*2); ctx.fill();
@@ -380,7 +383,7 @@ function drawAppleWorld(cx, cy) {
 // On-canvas HUD
 function drawHUD(){
   ctx.save();
-  ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(8,8,180,46);
+  ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(8,8,200,46);
   ctx.fillStyle='#fff'; ctx.font='bold 14px -apple-system, system-ui, Segoe UI, Roboto';
   ctx.fillText('Score: ' + score, 16, 26);
   ctx.fillText('Best: ' + best, 16, 44);
