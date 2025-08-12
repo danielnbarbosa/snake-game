@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-  <title>Snakes v3</title>
+  <title>Snakes v4</title>
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
@@ -17,7 +17,7 @@
     .btn { background:#161a1d; border:1px solid #2a2f33; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; }
     .btn:active { transform:scale(0.98); }
     .ghost { visibility:hidden; }
-    #tip { opacity:.75; font-size: 13px; text-align:center; max-width: 680px;}
+    #tip { opacity:.75; font-size: 13px; text-align:center; max-width: 700px;}
     a { color:#9fe870; text-decoration: none; }
     #pause, #restart, #mute { padding:10px 14px; }
     .chip { padding:.25rem .5rem; border:1px solid #2a2f33; border-radius:999px; font-size:12px; opacity:.9 }
@@ -30,7 +30,7 @@
       <div class="chip">Score: <span id="score">0</span></div>
       <div class="chip">Best: <span id="best">0</span></div>
       <div class="chip">Snakes: <span id="nsnakes">0</span></div>
-      <div class="chip">Pellets: <span id="npellets">0</span></div>
+      <div class="chip">Apples: <span id="napples">0</span></div>
       <button id="pause" class="btn">⏸︎</button>
       <button id="restart" class="btn">↻</button>
       <button id="mute" class="btn" aria-pressed="false">🔊</button>
@@ -45,8 +45,8 @@
       <div class="ghost"></div><div class="ghost"></div><div class="ghost"></div>
     </div>
     <div id="tip">
-      No wrap: hitting a wall is game over. Eat <b>pellets</b> to grow. You can still eat smaller snakes from either end;
-      for snakes same size or bigger, only their tails are safe to bite.
+      Wrap-around walls are back. Eat <b>apples</b> to grow.
+      Combat rules: if your snake is <b>larger or equal</b>, you can eat other snakes <i>from anywhere</i> (head, side, tail). If you're <b>smaller</b>, you can't eat them—you just bounce off.
     </div>
   </div>
 
@@ -78,9 +78,10 @@ function beep(freq=440, dur=0.08, type='sine', gain=0.03) {
   o.start(t0);
   o.stop(t0 + dur);
 }
-function sfxEatPellet(){ beep(300, .06, 'triangle', .05); }
+function sfxApple(){ beep(320, .06, 'triangle', .05); }
 function sfxEatSnake(){ beep(220, .07, 'triangle', .05); setTimeout(()=>beep(370, .07, 'triangle', .05), 60); }
 function sfxDead(){ beep(120, .18, 'sawtooth', .04); setTimeout(()=>beep(90, .22, 'sawtooth', .035), 120); }
+function sfxBounce(){ beep(180, .05, 'square', .04); }
 window.addEventListener('touchstart', () => { if (!audio.ctx && audio.enabled) { initAudio(); } }, {passive:true});
 window.addEventListener('mousedown', () => { if (!audio.ctx && audio.enabled) { initAudio(); } });
 
@@ -88,10 +89,11 @@ window.addEventListener('mousedown', () => { if (!audio.ctx && audio.enabled) { 
 const COLS = 24, ROWS = 24;
 const CELL = 20;
 const CANVAS_SIZE = 480;
-const TICK_MS_START = 150;             // slower
-const NPC_MAX = 2;                     // at most two AI snakes
-const PLAYER_START_LEN = 3;            // small start
-const PELLET_COUNT = 5;                // pellets on board
+const TICK_MS_PLAYER = 190;        // slower player
+const AI_STEP_INTERVAL = 2;        // AI moves once every N player ticks (slower than player)
+const NPC_MAX = 2;                 // at most two AI snakes
+const PLAYER_START_LEN = 3;        // small start
+const APPLE_COUNT = 5;             // apples on board
 const MAX_LEN = COLS*ROWS - 1;
 
 // Colors: player vs AI
@@ -104,14 +106,15 @@ const ctx = canvas.getContext('2d');
 const scoreEl = document.getElementById('score');
 const bestEl = document.getElementById('best');
 const nsnakesEl = document.getElementById('nsnakes');
-const npelletsEl = document.getElementById('npellets');
+const napplesEl = document.getElementById('napples');
 const pauseBtn = document.getElementById('pause');
 const restartBtn = document.getElementById('restart');
 const muteBtn = document.getElementById('mute');
 
-let player, npcs, pellets, dir, nextDir, tickMs, score, best, paused, dead;
+let player, npcs, apples, dir, nextDir, score, best, paused, dead;
+let tickAccum = 0, lastTs = performance.now(), tickCount = 0;
 
-best = parseInt(localStorage.getItem('best-score-v3') || '0', 10);
+best = parseInt(localStorage.getItem('best-score-v4') || '0', 10);
 bestEl.textContent = best;
 
 // Fit canvas CSS size
@@ -127,7 +130,7 @@ window.addEventListener('resize', fit);
 
 // Helpers
 function rnd(n){ return Math.floor(Math.random()*n); }
-function inBounds(x,y){ return x>=0 && x<COLS && y>=0 && y<ROWS; }
+function wrap(v, max){ return (v + max) % max; }
 function cellEq(a,b){ return a.x===b.x && a.y===b.y; }
 function anyAt(pos, arr){ return arr.some(p=>cellEq(p,pos)); }
 
@@ -139,34 +142,34 @@ function newSnake(len, skin, avoid=[]) {
     const body = [];
     for (let i=0;i<len;i++){
       let cx=x, cy=y;
-      if (dir==='left')  cx = x+i;
-      if (dir==='right') cx = x-i;
-      if (dir==='up')    cy = y+i;
-      if (dir==='down')  cy = y-i;
+      if (dir==='left')  cx = wrap(x+i, COLS);
+      if (dir==='right') cx = wrap(x-i, COLS);
+      if (dir==='up')    cy = wrap(y+i, ROWS);
+      if (dir==='down')  cy = wrap(y-i, ROWS);
       const pos = {x:cx, y:cy};
-      if (!inBounds(cx,cy) || avoid.some(s=>s.body.some(p=>cellEq(p,pos)))) { body.length=0; break; }
+      if (avoid.some(s=>s.body.some(p=>cellEq(p,pos)))) { body.length=0; break; }
       body.push(pos);
     }
     if (body.length===len) {
-      return { body, dir, nextDir: dir, skin, ai: false };
+      return { body, dir, nextDir: dir, skin, ai: false, lastTail: null };
     }
   }
   // fallback center
-  return { body:[{x:Math.floor(COLS/2), y:Math.floor(ROWS/2)}], dir:'right', nextDir:'right', skin, ai:false };
+  return { body:[{x:Math.floor(COLS/2), y:Math.floor(ROWS/2)}], dir:'right', nextDir:'right', skin, ai:false, lastTail:null };
 }
 
 function reset() {
   score = 0; scoreEl.textContent = score;
-  tickMs = TICK_MS_START;
   paused = false; dead = false;
   player = newSnake(PLAYER_START_LEN, PLAYER_SKIN);
   npcs = [];
   for (let i=0;i<NPC_MAX;i++) spawnNPC();
   nsnakesEl.textContent = npcs.length;
   dir='right'; nextDir='right';
-  pellets = [];
-  for (let i=0;i<PELLET_COUNT;i++) spawnPellet();
-  npelletsEl.textContent = pellets.length;
+  apples = [];
+  for (let i=0;i<APPLE_COUNT;i++) spawnApple();
+  napplesEl.textContent = apples.length;
+  tickAccum = 0; lastTs = performance.now(); tickCount = 0;
 }
 reset();
 
@@ -217,45 +220,41 @@ function toggleMute() {
 }
 
 // ---- Game loop ----
-let last = performance.now(), acc = 0;
 requestAnimationFrame(loop);
 function loop(ts) {
-  const dt = ts - last; last = ts; acc += dt;
-  while (acc >= tickMs) {
+  const dt = ts - lastTs; lastTs = ts; tickAccum += dt;
+  while (tickAccum >= TICK_MS_PLAYER) {
     if (!paused && !dead) step();
-    acc -= tickMs;
+    tickAccum -= TICK_MS_PLAYER;
+    tickCount++;
   }
   render();
   requestAnimationFrame(loop);
 }
 
 // ---- Logic ----
-function moveHead(pos, d) {
+function moveHeadWrap(pos, d) {
   const head = {x:pos.x, y:pos.y};
-  if (d==='left') head.x--;
-  else if (d==='right') head.x++;
-  else if (d==='up') head.y--;
-  else if (d==='down') head.y++;
+  if (d==='left') head.x = wrap(head.x-1, COLS);
+  else if (d==='right') head.x = wrap(head.x+1, COLS);
+  else if (d==='up') head.y = wrap(head.y-1, ROWS);
+  else if (d==='down') head.y = wrap(head.y+1, ROWS);
   return head;
 }
 
-function moveSnake(snake, d, killOnWall=true) {
-  const next = moveHead(snake.body[0], d);
-  if (killOnWall && !inBounds(next.x, next.y)) return false; // hit wall
-  // For NPCs, if out of bounds, try to turn instead of leaving grid
-  if (!killOnWall && !inBounds(next.x, next.y)) {
-    const turns = d==='left'||d==='right' ? ['up','down'] : ['left','right'];
-    let turned = false;
-    for (const t of turns) {
-      const h2 = moveHead(snake.body[0], t);
-      if (inBounds(h2.x, h2.y)) { snake.dir = t; snake.nextDir = t; snake.body.unshift(h2); turned = true; break; }
-    }
-    if (!turned) return false; // stuck, treat as death
-  } else {
-    snake.body.unshift(next);
-  }
+function moveSnake(snake, d) {
+  const next = moveHeadWrap(snake.body[0], d);
+  const oldTail = snake.body[snake.body.length-1];
+  snake.body.unshift(next);
+  snake.lastTail = {...oldTail};
   snake.body.pop();
-  return true;
+  return { newHead: next, oldTail };
+}
+
+function undoMove(snake) {
+  // remove the last inserted head and restore the lastTail
+  snake.body.shift();
+  if (snake.lastTail) snake.body.push(snake.lastTail);
 }
 
 function growSnake(snake, n=1) {
@@ -266,62 +265,65 @@ function growSnake(snake, n=1) {
 }
 
 function step() {
+  // Player move
+  const prevDir = dir;
   dir = nextDir;
-  if (!moveSnake(player, dir, true)) return gameOver();
+  moveSnake(player, dir);
 
-  // Player self collision
+  // Apples
+  const aIndex = apples.findIndex(p => cellEq(p, player.body[0]));
+  if (aIndex !== -1) {
+    apples.splice(aIndex,1);
+    napplesEl.textContent = apples.length;
+    sfxApple();
+    score += 1; scoreEl.textContent = score;
+    if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem('best-score-v4', best); }
+    growSnake(player, 1);
+    spawnApple();
+    napplesEl.textContent = apples.length;
+  }
+
+  // AI snakes move slower: only on certain ticks
+  if (tickCount % AI_STEP_INTERVAL === 0) {
+    for (const s of npcs) {
+      // simple wandering AI
+      const opposite = { up:'down', down:'up', left:'right', right:'left' };
+      if (Math.random() < 0.25) {
+        const options = ['up','down','left','right'].filter(x=>x!==opposite[s.dir]);
+        s.nextDir = options[rnd(options.length)];
+      }
+      s.dir = s.nextDir;
+      moveSnake(s, s.dir);
+    }
+  }
+
+  // Player with self
   for (let i=1;i<player.body.length;i++) if (cellEq(player.body[0], player.body[i])) return gameOver();
 
-  // Pellets
-  const pIndex = pellets.findIndex(p => cellEq(p, player.body[0]));
-  if (pIndex !== -1) {
-    pellets.splice(pIndex,1);
-    npelletsEl.textContent = pellets.length;
-    sfxEatPellet();
-    score += 1; scoreEl.textContent = score;
-    if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem('best-score-v3', best); }
-    growSnake(player, 1);
-    spawnPellet();
-    npelletsEl.textContent = pellets.length;
-  }
-
-  // NPCs move
-  for (const s of npcs) {
-    if (!moveSnake(s, s.nextDir, false)) {
-      // if died (stuck), respawn
-      replaceNPC(s);
-      continue;
-    }
-    const opposite = { up:'down', down:'up', left:'right', right:'left' };
-    if (Math.random() < 0.2) {
-      const options = ['up','down','left','right'].filter(x=>x!==opposite[s.dir]);
-      s.nextDir = options[rnd(options.length)];
-      s.dir = s.nextDir;
-    } else {
-      s.dir = s.nextDir;
-    }
-  }
-
-  // Player eats NPCs or dies by them
+  // Player vs NPCs collisions with new rules
   for (let i=0;i<npcs.length;i++) {
     const npc = npcs[i];
-    const hitIndex = npc.body.findIndex(p => cellEq(p, player.body[0]));
-    if (hitIndex !== -1) {
-      const targetLen = npc.body.length;
+    // Did player's head collide with any part of npc?
+    const idx = npc.body.findIndex(p => cellEq(p, player.body[0]));
+    if (idx !== -1) {
       const playerLen = player.body.length;
-      const tailIndex = npc.body.length - 1;
-      const isHead = (hitIndex === 0);
-      const isTail = (hitIndex === tailIndex);
-      const canEat = (targetLen < playerLen && (isHead || isTail)) || (targetLen >= playerLen && isTail);
-      if (canEat) {
+      const targetLen = npc.body.length;
+      if (playerLen >= targetLen) {
+        // Eat anywhere
         sfxEatSnake();
         score += targetLen; scoreEl.textContent = score;
-        if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem('best-score-v3', best); }
+        if (score > best) { best = score; bestEl.textContent = best; localStorage.setItem('best-score-v4', best); }
         growSnake(player, Math.min(targetLen, 40));
         replaceNPC(npc);
         return;
       } else {
-        return gameOver();
+        // Smaller -> bounce (no death): undo the move & reverse direction
+        sfxBounce();
+        undoMove(player);
+        // reverse direction away from impact
+        const opposite = { up:'down', down:'up', left:'right', right:'left' };
+        dir = opposite[dir]; nextDir = dir;
+        return;
       }
     }
   }
@@ -342,11 +344,12 @@ function spawnNPC() {
   npcs.push(s);
 }
 
-function spawnPellet() {
+function spawnApple() {
+  // ensure not spawning inside snakes or over existing apples
   for (let i=0;i<500;i++) {
     const pos = {x:rnd(COLS), y:rnd(ROWS)};
-    const occupied = anyAt(pos, player.body) || npcs.some(s=>anyAt(pos, s.body)) || anyAt(pos, pellets||[]);
-    if (!occupied) { pellets.push(pos); return; }
+    const occupied = anyAt(pos, player.body) || npcs.some(s=>anyAt(pos, s.body)) || anyAt(pos, apples||[]);
+    if (!occupied) { apples.push(pos); return; }
   }
 }
 
@@ -365,8 +368,8 @@ function render() {
   for (let y=1;y<ROWS;y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(CANVAS_SIZE,y*CELL); ctx.stroke(); }
   ctx.restore();
 
-  // pellets
-  for (const p of pellets) drawPellet(p.x, p.y);
+  // apples
+  for (const p of apples) drawApple(p.x, p.y);
 
   // draw NPCs
   for (const s of npcs) drawSnake(s);
@@ -377,15 +380,25 @@ function render() {
   if (dead) overlay('Game Over');
 }
 
-function drawPellet(cx, cy) {
+function drawApple(cx, cy) {
   const x = cx*CELL + CELL/2;
   const y = cy*CELL + CELL/2;
-  const r = Math.max(3, Math.floor(CELL*0.18));
-  const g = ctx.createRadialGradient(x, y, 1, x, y, r);
-  g.addColorStop(0, '#8ef0ba');
-  g.addColorStop(1, 'rgba(60,180,110,0.2)');
-  ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  const r = Math.max(4, Math.floor(CELL*0.22));
+  // apple body
+  ctx.fillStyle = '#e74c3c';
+  ctx.beginPath(); ctx.arc(x-2, y, r*0.95, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+2, y, r*0.95, 0, Math.PI*2); ctx.fill();
+  // highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.beginPath(); ctx.arc(x-4, y-3, r*0.45, 0, Math.PI*2); ctx.fill();
+  // stem
+  ctx.strokeStyle = '#5d3a1a'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x, y-r*1.1); ctx.lineTo(x+3, y-r*1.55); ctx.stroke();
+  // leaf
+  ctx.fillStyle = '#2ecc71';
+  ctx.beginPath();
+  ctx.ellipse(x+6, y-r*1.25, 3, 6, Math.PI/6, 0, Math.PI*2);
+  ctx.fill();
 }
 
 function drawSnake(s, isPlayer=false) {
